@@ -92,6 +92,23 @@ nav button.active{color:var(--brand)}
 .ing input,.ing select{min-height:44px;border:1px solid var(--line);background:var(--card);border-radius:10px;padding:0 8px;width:100%;min-width:0}
 .ing select{grid-column:1 / 4}
 .ingwrap{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:8px;margin-bottom:8px}
+.importcard{padding:14px;margin-bottom:12px;display:flex;flex-direction:column;gap:8px}
+.importcard .hint{font-size:13px;color:var(--muted);text-align:center}
+.status{display:none;align-items:center;gap:10px;padding:12px;border-radius:12px;background:var(--brand-2);color:var(--brand);font-weight:600;margin:10px 0;font-size:15px}
+.status.show{display:flex}
+.spin{width:20px;height:20px;border:3px solid currentColor;border-right-color:transparent;border-radius:50%;animation:sp .8s linear infinite;flex:none}
+@keyframes sp{to{transform:rotate(360deg)}}
+.err{display:none;padding:12px;border-radius:12px;background:#fdecea;color:#8a1f15;margin:10px 0;font-size:15px}
+@media (prefers-color-scheme:dark){.err{background:#3a1d1a;color:#ffb4a9}}
+.err.show{display:block}
+.note{padding:10px 12px;border-radius:12px;background:var(--brand-2);color:var(--ink);font-size:14px;margin-bottom:12px}
+.note a{color:var(--brand);word-break:break-all}
+details.paste{margin-top:14px;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:0 12px}
+details.paste summary{min-height:52px;display:flex;align-items:center;font-weight:600;cursor:pointer;list-style:none}
+details.paste summary::-webkit-details-marker{display:none}
+details.paste[open]{padding-bottom:12px}
+textarea{width:100%;min-height:180px;border:1px solid var(--line);background:var(--bg);border-radius:12px;padding:10px 12px;resize:vertical}
+.caption{font-size:13px;color:var(--muted);background:var(--bg);border-radius:10px;padding:8px 10px;margin-top:8px;max-height:110px;overflow:auto;white-space:pre-wrap}
 .toast{position:fixed;left:50%;bottom:calc(140px + var(--safe-b));transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:12px;font-size:14px;opacity:0;pointer-events:none;transition:opacity .2s;z-index:30}
 .toast.show{opacity:1}
 </style>
@@ -104,6 +121,10 @@ nav button.active{color:var(--brand)}
 
 <main>
   <section id="view-meals" class="view active">
+    <div class="card importcard">
+      <button class="btn primary block" id="importBtn">🔗 Import recipe from a link</button>
+      <div class="hint">Paste a link from a recipe site or a TikTok video</div>
+    </div>
     <input id="search" class="search" type="search" placeholder="Search meals…" autocomplete="off">
     <div id="meals"></div>
     <button class="btn block" id="addMeal" style="margin-top:8px">＋ Add your own meal</button>
@@ -225,9 +246,278 @@ function parseExtra(text){
   return { name:m[3].trim(), qty:round2(q), unit:(m[2]||"").toLowerCase(), category:"Other" };
 }
 
+
+/* ===== Recipe import: ingredient parsing ===== */
+var UNI_FRAC = {"½":"1/2","⅓":"1/3","⅔":"2/3","¼":"1/4","¾":"3/4","⅕":"1/5","⅖":"2/5","⅗":"3/5","⅘":"4/5","⅙":"1/6","⅚":"5/6","⅛":"1/8","⅜":"3/8","⅝":"5/8","⅞":"7/8"};
+var WORD_NUM = {a:1,an:1,one:1,two:2,three:3,four:4,five:5,six:6,seven:7,eight:8,nine:9,ten:10,eleven:11,twelve:12,half:0.5,dozen:12};
+var UNIT_MAP = [
+  [/^(tablespoons?|tbsps?|tbls?|tbs|tb)$/i,"tbsp"],[/^T$/,"tbsp"],
+  [/^(teaspoons?|tsps?)$/i,"tsp"],[/^t$/,"tsp"],
+  [/^(cups?|c)$/i,"cup"],
+  [/^(fl\.? ?oz|fluid ounces?)$/i,"fl oz"],
+  [/^(ounces?|oz)$/i,"oz"],[/^(pounds?|lbs?)$/i,"lb"],
+  [/^(grams?|gr?|gms?)$/i,"g"],[/^(kilograms?|kgs?|kilos?)$/i,"kg"],
+  [/^(millilit(er|re)s?|mls?)$/i,"ml"],[/^(lit(er|re)s?|l)$/i,"l"],
+  [/^(quarts?|qts?)$/i,"qt"],[/^(pints?|pts?)$/i,"pint"],[/^(gallons?|gals?)$/i,"gallon"],
+  [/^cloves?$/i,"cloves"],[/^(cans?|tins?)$/i,"can"],[/^jars?$/i,"jar"],[/^bottles?$/i,"bottle"],
+  [/^(packages?|pkgs?|packets?|packs?|sachets?)$/i,"package"],[/^(boxe?s?)$/i,"box"],[/^bags?$/i,"bag"],
+  [/^sticks?$/i,"stick"],[/^(slices?)$/i,"slices"],[/^pinch(es)?$/i,"pinch"],[/^dash(es)?$/i,"dash"],
+  [/^(bunch(es)?)$/i,"bunch"],[/^heads?$/i,"head"],[/^sprigs?$/i,"sprigs"],[/^stalks?$/i,"stalks"],
+  [/^(ribs?)$/i,"stalks"],[/^handfuls?$/i,"handful"],[/^(pieces?|pcs?)$/i,"pieces"],[/^fillets?$/i,"fillets"],
+  [/^loa(f|ves)$/i,"loaf"],[/^(inch|inches|in)$/i,"inch"],[/^(cm)$/i,"cm"],[/^leaves$/i,"leaves"],[/^(sheets?)$/i,"sheets"],[/^(drops?)$/i,"drops"],[/^(scoops?)$/i,"scoop"],[/^(envelopes?)$/i,"package"],[/^(containers?|tubs?)$/i,"container"]
+];
+function normUnit(w){
+  if(!w) return null;
+  var c = w.replace(/\.$/,"");
+  for(var i=0;i<UNIT_MAP.length;i++) if(UNIT_MAP[i][0].test(c)) return UNIT_MAP[i][1];
+  return null;
+}
+var SIZE_WORDS = /^(extra[- ]large|x-large|large|medium|small|big|jumbo|heaping|heaped|level|scant|generous|good)\s+/i;
+var PREP_WORDS = /\b(finely|roughly|coarsely|thinly|thickly|freshly|lightly|very|well|chopped|minced|diced|sliced|peeled|deveined|seeded|deseeded|cubed|trimmed|softened|melted|beaten|whisked|rinsed|drained|halved|quartered|julienned|cored|pitted|stemmed|torn|crumbled|sifted|packed|divided|separated|zested|juiced|cooked|uncooked|optional|to taste|as needed|for garnish|for serving|for frying|at room temperature|room temperature|cold|warm|hot|cut into [^,]*|plus more[^,]*|or more|or to taste)\b/gi;
+
+function decodeEntities(s){
+  return String(s==null?"":s).replace(/&(#x[0-9a-f]+|#\d+|[a-z]+\d*);/gi, function(m, e){
+    if(e[0]==="#") { var n = e[1].toLowerCase()==="x" ? parseInt(e.slice(2),16) : parseInt(e.slice(1),10); return isNaN(n)?m:String.fromCodePoint(n); }
+    var map={amp:"&",lt:"<",gt:">",quot:'"',apos:"'",nbsp:" ",frac12:"½",frac14:"¼",frac34:"¾",frac13:"⅓",frac23:"⅔",frac18:"⅛",deg:"°",ndash:"–",mdash:"—",rsquo:"’",lsquo:"‘",rdquo:"”",ldquo:"“",hellip:"…",eacute:"é",egrave:"è",ntilde:"ñ",reg:"®",trade:"™",times:"×"};
+    return map[e.toLowerCase()] != null ? map[e.toLowerCase()] : m;
+  }).replace(/<[^>]+>/g,"");
+}
+
+/* Parse a number token: "1", "1.5", "1/2", "1 1/2" */
+function numVal(tok){
+  tok = tok.trim();
+  var m;
+  if((m = tok.match(/^(\d+)\s+(\d+)\/(\d+)$/))) return Number(m[1]) + Number(m[2])/Number(m[3]);
+  if((m = tok.match(/^(\d+)\/(\d+)$/))) return Number(m[2]) ? Number(m[1])/Number(m[2]) : null;
+  if(/^\d*[.,]?\d+$/.test(tok)) return Number(tok.replace(",","."));
+  return null;
+}
+/* Parse a qty string as typed in the editor or found in text (supports ranges -> upper bound) */
+function parseQty(s){
+  if(s == null) return null;
+  s = String(s).trim().replace(/[½⅓⅔¼¾⅕⅖⅗⅘⅙⅚⅛⅜⅝⅞]/g, function(f){ return " " + UNI_FRAC[f]; }).replace(/\u2044/g,"/").trim().replace(/\s+/g," ");
+  var r = s.split(/\s*(?:-|–|—|to|or)\s*/i);
+  var v = numVal(r[r.length-1]);
+  return v == null ? null : round2(v);
+}
+
+var NUM_RE = "(?:\\d+\\s+\\d+\\/\\d+|\\d+\\/\\d+|\\d*[.,]?\\d+)";
+var QTY_RE = new RegExp("^(" + NUM_RE + "(?:\\s*(?:-|–|—|to|or)\\s*" + NUM_RE + ")?)\\s*");
+
+function guessCategory(name){
+  var n = " " + normName(name) + " ";
+  var rules = [
+    ["Frozen", /\bfrozen\b|\bice cream\b/],
+    ["Produce", /\b(bell peppers?|red peppers?(?! flakes)|green peppers?|jalape|poblano|serrano|habanero|chil(e|i)s? peppers?|fresh (herbs|basil|parsley|cilantro|thyme|rosemary|dill|mint|oregano|ginger|sage|chives))/],
+    ["Spices", /\b(salt|black pepper|white pepper|peppercorns?|pepper$|pepper flakes|chil+i flakes|paprika|cumin|chil+i powder|cayenne|cinnamon|nutmeg|oregano|dried|powder|seasoning|bay lea|turmeric|garam masala|allspice|cardamom|ground coriander|coriander seeds?|cloves ground|ground cloves|italian herbs|herbes|za'?atar|sumac|fennel seeds?|mustard seeds?|red pepper flakes|msg|spice)\b/],
+    ["Pantry", /\b(broth|stock|bouillon|sauce|paste|ketchup|mustard|mayo|mayonnaise|vinegar|oil|flour|sugar|honey|syrup|molasses|pasta|spaghetti|penne|rigatoni|fettuc+ine|linguine|tagliatelle|torchietti|orzo|macaroni|lasagna|noodles?|ramen|rice|oats|quinoa|couscous|beans|lentils|chickpeas|breadcrumbs|panko|cornstarch|corn starch|baking soda|baking powder|yeast|cocoa|chocolate|vanilla|extract|almonds?|peanuts?|walnuts?|pecans?|cashews?|pine nuts|seeds|raisins|coconut milk|passata|canned|crushed tomatoes|diced tomatoes|tomato puree|salsa|jam|peanut butter|nut butter|tahini|mirin|sake|wine|water|nori|sesame|chips|crackers|cereal|gelatin|evaporated milk|condensed milk|olives|capers|pickles|sriracha|gochujang|miso|curry paste|stock cubes?|cooking spray|tuna)\b/],
+    ["Dairy & Eggs", /\b(milk|cream|butter|cheese|cheddar|mozzarella|parmesan|parmigiano|pecorino|ricotta|feta|gouda|gruy[eè]re|brie|halloumi|mascarpone|scamorza|provolone|yogh?urt|eggs?|yolks?|whites?|half[- ]and[- ]half|ghee|buttermilk|creme fraiche|crème fraîche|kefir)\b/],
+    ["Meat & Seafood", /\b(chicken|beef|pork|bacon|sausages?|ham|turkey|lamb|veal|steaks?|mince|ground meat|ribs|brisket|chorizo|pepperoni|prosciutto|pancetta|salami|shrimp|prawns?|salmon|cod|tilapia|fish|crab|lobster|scallops?|mussels|clams|anchov(y|ies)|roe|mentaiko|duck|venison|meatballs|tofu)\b/],
+    ["Bakery", /\b(bread|buns?|rolls?|tortillas?|pitas?|naan|bagels?|baguette|croissants?|brioche|croutons|english muffins?|pizza dough|puff pastry|pie crust|wraps?|sourdough|ciabatta|focaccia)\b/],
+    ["Produce", /\b(onions?|garlic|shallots?|tomato(es)?|potato(es)?|carrots?|celery|lettuce|romaine|spinach|kale|arugula|rocket|cabbage|broccoli|cauliflower|zucchini|courgettes?|squash|pumpkin|cucumbers?|mushrooms?|avocados?|lemons?|limes?|oranges?|apples?|bananas?|berries|strawberr|blueberr|raspberr|grapes|mango|pineapple|peach|pears?|ginger|cilantro|coriander|parsley|basil|mint|dill|rosemary|thyme|sage|chives|scallions?|green onions?|spring onions?|leeks?|corn|peas|green beans|asparagus|eggplants?|aubergines?|beets?|radish|sweet potato|yams?|peppers?|chil(i|e|li)s?|herbs|shiso|lemongrass|bok choy|sprouts|fennel|jicama|okra|kiwi|watermelon|melon|cherries|plums?|figs?|dates|salad|greens|microgreens|produce)\b/]
+  ];
+  for(var i=0;i<rules.length;i++) if(rules[i][1].test(n)) return rules[i][0];
+  return "Other";
+}
+
+/* "2 1/2 cups (300 g) all-purpose flour, divided" -> {qty:2.5, unit:"cup", name:"all-purpose flour", category:"Pantry"} */
+function parseIngredientLine(line){
+  var s = decodeEntities(line);
+  s = s.replace(/[▢☐✔✓✅•●▪◦·*🔸🔹➡️]/g," ").replace(/^\s*[-–—]\s*/,"").replace(/^\s*\d+[.)]\s+(?=\D)/,"");
+  s = s.replace(/[½⅓⅔¼¾⅕⅖⅗⅘⅙⅚⅛⅜⅝⅞]/g, function(f){ return " " + UNI_FRAC[f] + " "; }).replace(/\u2044/g,"/");
+  s = s.replace(/(\d)\s*\/\s*(\d)/g,"$1/$2").replace(/\s+/g," ").trim();
+  var orig = s;
+  // drop parentheticals / brackets
+  var prev; do { prev = s; s = s.replace(/\([^()]*\)|\[[^\[\]]*\]/g," "); } while(s !== prev);
+  s = s.replace(/[()]/g," ").replace(/\s+/g," ").trim();
+  var qty = null, unit = "", m;
+  // "juice of 2 lemons" / "zest of 1 lime"
+  if((m = s.match(/^(?:the\s+)?(juice|zest)\s+(?:and\s+(?:juice|zest)\s+)?of\s+(.+)$/i))){
+    s = m[2];
+  }
+  m = s.match(QTY_RE);
+  if(m){ qty = parseQty(m[1]); s = s.slice(m[0].length); }
+  else if((m = s.match(/^(a|an|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|half|dozen)\b\s*/i))){
+    var rest = s.slice(m[0].length);
+    var nextWord = (rest.match(/^[a-z.]+/i)||[""])[0];
+    if(m[1].toLowerCase()!=="a" && m[1].toLowerCase()!=="an" || normUnit(nextWord)) { qty = WORD_NUM[m[1].toLowerCase()]; s = rest; }
+  }
+  // "1 x 400g tin" -> skip multiplier
+  if(qty != null && (m = s.match(/^x\s*(\d+[.,]?\d*)\s*(g|ml|oz)?\s+/i))){ s = s.slice(m[0].length); }
+  // number glued or separate unit: "350g", "2 tbsp", "1 fl oz"
+  s = s.replace(/^\s+/,"");
+  if((m = s.match(/^(fl\.?\s?oz|fluid ounces?)\b\.?\s*/i))){ unit="fl oz"; s=s.slice(m[0].length); }
+  else if((m = s.match(/^([a-zA-Z]+)\.?(?=[\s,]|$)\s*/))){
+    var u = normUnit(m[1]);
+    // avoid treating "large" etc as units, and single-letter t/T only when qty present
+    if(u && (m[1].length>1 || qty!=null)){ unit=u; s=s.slice(m[0].length); }
+  }
+  // second unit after size word, e.g. "1 large can"
+  if(!unit && (m = s.match(SIZE_WORDS))){ var after = s.slice(m[0].length); var m2 = after.match(/^([a-zA-Z]+)\.?\s+/); if(m2 && normUnit(m2[1]) && m2[1].length>1){ unit=normUnit(m2[1]); s=after.slice(m2[0].length); } }
+  s = s.replace(/^of\s+/i,"");
+  // size words at start of name
+  while((m = s.match(SIZE_WORDS))) s = s.slice(m[0].length);
+  // cut at first comma / semicolon / " - " (prep notes)
+  s = s.split(/\s*[,;]\s*|\s+[-–—]\s+/)[0];
+  // alternatives: keep first option
+  var alt = s.split(/\s+or\s+/i); if(alt.length>1 && alt[0].trim().split(" ").length>=1 && alt[0].trim()) s = alt[0];
+  var packaged = /^(can|jar|package|box|bag|bottle|container)$/.test(unit);
+  var cleaned = (packaged ? s.replace(/\b(drained|rinsed|optional|divided|to taste)\b/gi," ") : s.replace(PREP_WORDS," ")).replace(/\b(and|&)\s*$/i,"").replace(/^\s*(and|&)\b/i,"").replace(/\s+/g," ").trim();
+  cleaned = cleaned.replace(/(\s+(crushed|grated|shredded|toasted|mashed|ground|zested|squeezed|thawed|chilled|frozen))+$/i,"").trim();
+  cleaned = cleaned.replace(/^(thumb[- ]sized|small|large|\d+[- ]?(inch|cm))?\s*(piece|knob|chunk|thumb)s?\s+of\s+/i,"").trim();
+  if(cleaned) s = cleaned;
+  s = s.replace(/^[^a-z0-9\u00C0-\u024F]+|[^a-z0-9\u00C0-\u024F%)]+$/gi,"").trim().toLowerCase();
+  s = s.replace(/^(a|an|the)\s+/,"");
+  if(!s) s = orig.toLowerCase();
+  if(!unit && /^(fresh )?garlic cloves?$/.test(s)){ s = "garlic"; unit = "cloves"; }
+  var cat = guessCategory(s);
+  if(packaged && (cat==="Produce" || cat==="Other")) cat = "Pantry";
+  return { name:s, qty:qty, unit:unit, category:cat };
+}
+
+function parseYield(y){
+  if(Array.isArray(y)){ for(var i=0;i<y.length;i++){ var v=parseYield(y[i]); if(v) return v; } return null; }
+  if(typeof y === "number") return y>0 ? Math.round(y) : null;
+  var m = String(y||"").match(/(\d+)/);
+  return m ? Math.max(1, Math.min(99, parseInt(m[1],10))) : null;
+}
+
+function hasType(o, t){
+  var ty = o && o["@type"]; if(!ty) return false;
+  return (Array.isArray(ty)?ty:[ty]).some(function(x){ return String(x).replace(/^.*[\/#]/,"").toLowerCase()===t; });
+}
+function findRecipeNode(o, depth){
+  depth = depth||0; if(!o || typeof o!=="object" || depth>8) return null;
+  if(Array.isArray(o)){ for(var i=0;i<o.length;i++){ var r=findRecipeNode(o[i],depth+1); if(r) return r; } return null; }
+  if(hasType(o,"recipe")) return o;
+  if(o["@graph"]){ var g=findRecipeNode(o["@graph"],depth+1); if(g) return g; }
+  for(var k in o){ if(k!=="@graph" && o[k] && typeof o[k]==="object"){ var r2=findRecipeNode(o[k],depth+1); if(r2) return r2; } }
+  return null;
+}
+function toTextList(v){
+  if(!v) return [];
+  if(typeof v === "string") return v.split(/\n+/);
+  if(Array.isArray(v)) return v.reduce(function(a,x){ return a.concat(typeof x==="string"?[x]:(x&&(x.text||x.name)?[x.text||x.name]:[])); },[]);
+  return [];
+}
+/* Extract {name, servings, lines} from page HTML using JSON-LD (+ regex microdata fallback) */
+function extractRecipeFromHtml(html){
+  var re = /<script[^>]*type\s*=\s*["']?application\/ld\+json["']?[^>]*>([\s\S]*?)<\/script>/gi, m, node=null;
+  while(!node && (m = re.exec(html))){
+    var raw = m[1].trim().replace(/^<!\[CDATA\[|\]\]>$/g,""), data=null;
+    try{ data = JSON.parse(raw); }catch(e){ try{ data = JSON.parse(raw.replace(/[\u0000-\u001f]+/g," ").replace(/,\s*([}\]])/g,"$1")); }catch(e2){} }
+    if(data) node = findRecipeNode(data);
+  }
+  if(node){
+    var lines = toTextList(node.recipeIngredient || node.ingredients).map(decodeEntities).map(function(s){return s.trim();}).filter(Boolean);
+    if(lines.length) return { name: decodeEntities(Array.isArray(node.name)?node.name[0]:node.name||"").trim(), servings: parseYield(node.recipeYield || node.yield), lines: lines, via:"json-ld" };
+  }
+  // microdata fallback (regex; the browser also tries DOMParser)
+  var md = [], mr = /<([a-z0-9]+)[^>]*itemprop\s*=\s*["'](?:recipeIngredient|ingredients)["'][^>]*>([\s\S]*?)<\/\1>/gi;
+  while((m = mr.exec(html))) md.push(decodeEntities(m[2]).replace(/\s+/g," ").trim());
+  md = md.filter(Boolean);
+  if(md.length){
+    var nm = html.match(/itemprop\s*=\s*["']name["'][^>]*>([^<]+)</i);
+    var ym = html.match(/itemprop\s*=\s*["']recipeYield["'][^>]*?(?:content\s*=\s*["']([^"']+)["'][^>]*>|>([^<]+)<)/i);
+    return { name: nm?decodeEntities(nm[1]).trim():"", servings: ym?parseYield(ym[1]||ym[2]):null, lines: md, via:"microdata" };
+  }
+  return null;
+}
+function pageTitle(html){
+  var m = html.match(/<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)/i) || html.match(/<title[^>]*>([^<]+)</i);
+  return m ? decodeEntities(m[1]).replace(/\s*[|–—-]\s*[^|–—-]*$/,"").trim() : "";
+}
+
+/* ===== TikTok captions ===== */
+function isTikTokUrl(u){ return /^https?:\/\/([a-z0-9-]+\.)*tiktok\.com\//i.test(String(u||"").trim()); }
+function tiktokVideoId(u){ var m = String(u||"").match(/\/(?:video|photo|v)\/(\d{8,})/); return m ? m[1] : null; }
+function titleCase(s){ return s.toLowerCase().replace(/(^|[\s(-])([a-z])/g,function(_,a,b){return a+b.toUpperCase();}); }
+var STEP_START = /(?:^|\s)(?:instructions?|directions?|method|steps?|how to make it|preparation|prep)\s*[:：]|(?:^|\s)(?:step\s*)?1[.)]\s+[A-Za-z]/i;
+
+/* Pull ingredient-looking lines out of a TikTok/Instagram caption (often flattened onto one line) */
+function extractFromCaption(text){
+  var t = decodeEntities(text||"").replace(/\r/g,"");
+  t = t.replace(/#[^\s#]+/g," ").replace(/@[\w.]+/g," ");
+  var servings = null, m;
+  if((m = t.match(/\b(?:serves|servings?|feeds|makes)\s*[:：]?\s*(\d+)(?:\s*-\s*\d+)?(?:\s*(?:people|servings|portions))?/i)) || (m = t.match(/\b(\d+)\s*(?:servings|portions)\b/i))){ servings = parseInt(m[1],10); t = t.replace(m[0]," "); }
+  // remove parentheticals (they often contain numbers that confuse splitting)
+  var prev; do { prev=t; t = t.replace(/\([^()]*\)/g," "); } while(prev!==t);
+  var hdr = t.match(/\bingredients?\b\s*(?:\([^)]*\))?\s*[:：\-👇⬇️]*/i), title = "", body;
+  if(hdr){ title = t.slice(0, hdr.index); body = t.slice(hdr.index + hdr[0].length); }
+  else {
+    var qm = t.match(new RegExp("(^|[\\s\\-•*])(" + NUM_RE + "|[½⅓⅔¼¾⅛])\\s*(" + "[a-zA-Z]+" + ")"));
+    // first quantity followed by a unit or a food-ish word
+    var re = new RegExp("(^|[\\s\\-•*])(?:" + NUM_RE + "|[½⅓⅔¼¾⅛])(?:\\s*(?:-|to)\\s*" + NUM_RE + ")?\\s*([a-zA-Z]+)","g"), idx=-1, mm;
+    while((mm = re.exec(t))){ if(normUnit(mm[2]) || guessCategory(mm[2])!=="Other" || SIZE_WORDS.test(mm[2]+" ")){ idx = mm.index + mm[1].length; break; } }
+    if(idx < 0) return { name: cleanTitle(t), servings: servings, lines: [] };
+    title = t.slice(0, idx); body = t.slice(idx);
+  }
+  var stop = body.search(STEP_START); if(stop >= 0) body = body.slice(0, stop);
+  // split into candidate lines
+  var parts = body.split(/\n+|\s{2,}|(?:^|\s)[-–•*▪◦●✓✔✅🔸🔹]+\s*|(?:^|\s)\d+[.)](?=\s)|[;]/);
+  var lines = [];
+  parts.forEach(function(p){
+    p = (p||"").trim(); if(!p) return;
+    // split before a new quantity that follows a word, e.g. "soy sauce 2 tablespoons mirin" / "cream600ml stock"
+    p.replace(new RegExp("([A-Za-z\\u00C0-\\u024F,;!)’'])\\s*(?=(?:" + NUM_RE + "|[½⅓⅔¼¾⅛])(?:\\s*(?:-|to)\\s*\\d+)?\\s*[a-zA-Z½⅓⅔¼¾⅛])","g"), function(all, c, off, str){
+        if((c==="x"||c==="X") && (off===0 || /\s/.test(str.charAt(off-1)))) return all; // "1 x 400g tin"
+        return c + "\u0001";
+      }).split("\u0001")
+      .forEach(function(q){ q = q.replace(/^[\s:,.]+|[\s:,.!]+$/g,"").trim(); if(q) lines.push(q); });
+  });
+  lines = lines.filter(function(l){
+    var words = l.split(/\s+/).length;
+    if(words > 12) return false;
+    if(/^(enjoy|follow|save|recipe|full recipe|link in bio|comment)/i.test(l)) return false;
+    return /[a-z]/i.test(l);
+  });
+  if(!hdr) lines = lines.filter(function(l){ return QTY_RE.test(l) || /^[½⅓⅔¼¾⅛]/.test(l); });
+  return { name: cleanTitle(title), servings: servings, lines: lines };
+}
+function cleanTitle(s){
+  s = String(s||"").replace(/#[^\s#]+/g," ");
+  // split on emoji / sentence ends / double spaces, take the most title-like early segment
+  var segs = s.split(/[\u{1F000}-\u{1FAFF}\u2600-\u27BF\uFE0F]|[.!?:]\s|\s{2,}|\n/u).map(function(x){ return x.replace(/^(let[’']?s make|how to make|making|today we[’']?re making|recipe for|recipe|easy|the best)\s+/i,"").replace(/[^\w\s&'’-]+/g," ").replace(/\s+/g," ").trim(); }).filter(function(x){ return x.length>=3; });
+  var t = segs[0] || "";
+  if(t.split(" ").length > 8) t = t.split(" ").slice(0,8).join(" ");
+  if(t && t === t.toUpperCase()) t = titleCase(t);
+  return t;
+}
+
+/* Pasted text: one ingredient per line (or a flattened caption) -> parsed ingredient objects */
+function parseIngredientText(text){
+  var t = String(text||"").trim(); if(!t) return { name:"", servings:null, ingredients:[] };
+  var rawLines = t.split(/\n+/).map(function(l){return l.trim();}).filter(Boolean);
+  var res;
+  if(rawLines.length >= 3){
+    var name = "", servings = null, lines = [], m;
+    rawLines.forEach(function(l){
+      if((m = l.match(/\b(?:serves|servings?|yield|makes)\s*[:：]?\s*(\d+)/i)) && l.split(" ").length<6){ servings = parseInt(m[1],10); return; }
+      if(/^(ingredients?|for the [a-z ]+|sauce|dressing|marinade|topping)\s*:?\s*$/i.test(l)) return;
+      if(/^(instructions?|directions?|method|steps?)\s*:?\s*$/i.test(l)) { lines.stop = true; return; }
+      if(lines.stop) return;
+      if(l.split(/\s+/).length > 14) return;
+      lines.push(l);
+    });
+    res = { name:name, servings:servings, lines:lines };
+  } else res = extractFromCaption(t);
+  return { name:res.name, servings:res.servings, ingredients: res.lines.map(parseIngredientLine).filter(function(i){ return i.name && i.name.length < 60; }) };
+}
+
+/* Editor display helper: 1.5 -> "1 1/2" */
+function qtyToInput(q){
+  if(q == null || q === "") return "";
+  var w = Math.floor(q), r = q - w, fr = [[1/8,"1/8"],[1/4,"1/4"],[1/3,"1/3"],[1/2,"1/2"],[2/3,"2/3"],[3/4,"3/4"]];
+  if(r < 0.01) return String(w);
+  for(var i=0;i<fr.length;i++) if(Math.abs(r-fr[i][0])<0.02) return (w? w+" ":"") + fr[i][1];
+  return String(round2(q));
+}
+
 if(typeof module !== "undefined" && module.exports){
   module.exports = { CATEGORIES:CATEGORIES, normName:normName, itemKey:itemKey, scaleIngredients:scaleIngredients,
-    buildList:buildList, fmtQty:fmtQty, shopQty:shopQty, fmtItem:fmtItem, listToText:listToText, parseExtra:parseExtra };
+    buildList:buildList, fmtQty:fmtQty, shopQty:shopQty, fmtItem:fmtItem, listToText:listToText, parseExtra:parseExtra,
+    parseIngredientLine:parseIngredientLine, parseQty:parseQty, guessCategory:guessCategory, parseYield:parseYield, extractRecipeFromHtml:extractRecipeFromHtml,
+    pageTitle:pageTitle, isTikTokUrl:isTikTokUrl, tiktokVideoId:tiktokVideoId, extractFromCaption:extractFromCaption, parseIngredientText:parseIngredientText, qtyToInput:qtyToInput, decodeEntities:decodeEntities };
 }
 </script>
 
@@ -440,14 +730,17 @@ function catOptions(sel){ return CATEGORIES.map(function(c){ return '<option'+(c
 function ingRow(i){
   i = i || {name:"",qty:"",unit:"",category:"Produce"};
   return '<div class="ingwrap"><div class="ing"><input class="in-name" placeholder="Ingredient" value="'+esc(i.name)+'">'+
-    '<input class="in-qty" inputmode="decimal" placeholder="Qty" value="'+esc(i.qty==null?"":i.qty)+'">'+
+    '<input class="in-qty" inputmode="decimal" placeholder="Qty" value="'+esc(qtyToInput(i.qty))+'">'+
     '<input class="in-unit" placeholder="Unit" value="'+esc(i.unit)+'">'+
     '<button type="button" class="iconbtn rm" aria-label="Remove ingredient">🗑️</button>'+
     '<select class="in-cat">'+catOptions(i.category)+'</select></div></div>';
 }
-function openEditor(m){
-  var isNew = !m; m = m ? clone(m) : {id:null, name:"", emoji:"🍽️", servings:4, ingredients:[{name:"",qty:"",unit:"",category:"Produce"}]};
-  sheet.innerHTML = '<h2>'+(isNew?"New meal":"Edit meal")+'</h2>'+
+function openEditor(m, opts){
+  opts = opts || {};
+  var isNew = !m || !m.id; m = m ? clone(m) : {id:null, name:"", emoji:"🍽️", servings:4, ingredients:[{name:"",qty:"",unit:"",category:"Produce"}]};
+  if(!m.ingredients || !m.ingredients.length) m.ingredients=[{name:"",qty:"",unit:"",category:"Produce"}];
+  sheet.innerHTML = '<h2>'+(opts.title || (isNew?"New meal":"Edit meal"))+'</h2>'+
+    (opts.note ? '<div class="note">'+opts.note+'</div>' : (m.source ? '<div class="note">Imported from <a href="'+esc(m.source)+'" target="_blank" rel="noopener">'+esc(m.source.replace(/^https?:\/\/(www\.)?/,"").slice(0,50))+'</a></div>' : ''))+
     '<div class="row"><label class="field" style="width:76px"><span>Icon</span><input id="ed-emoji" maxlength="4" value="'+esc(m.emoji)+'" style="text-align:center;font-size:22px"></label>'+
     '<label class="field" style="flex:1"><span>Meal name</span><input id="ed-name" placeholder="e.g. Grandma\'s meatloaf" value="'+esc(m.name)+'"></label></div>'+
     '<label class="field"><span>Recipe makes (servings)</span><input id="ed-serv" type="number" min="1" max="99" inputmode="numeric" value="'+esc(m.servings)+'"></label>'+
@@ -465,16 +758,209 @@ function openEditor(m){
     var ings=[]; $("#ed-ings").querySelectorAll(".ingwrap").forEach(function(w){
       var n=w.querySelector(".in-name").value.trim(); if(!n) return;
       var qs=w.querySelector(".in-qty").value.trim(), q=null;
-      if(qs){ q = qs.indexOf("/")>0 ? Number(qs.split("/")[0])/Number(qs.split("/")[1]) : Number(qs); if(isNaN(q)) q=null; }
+      if(qs){ q = parseQty(qs); }
       ings.push({name:n, qty:q, unit:w.querySelector(".in-unit").value.trim(), category:w.querySelector(".in-cat").value});
     });
     if(!ings.length){ toast("Add at least one ingredient"); return; }
-    var meal={id:m.id||uid(), name:name, emoji:$("#ed-emoji").value.trim()||"🍽️", servings:Math.max(1,parseInt($("#ed-serv").value,10)||4), ingredients:ings};
+    var meal={id:m.id||uid(), source:m.source||undefined, name:name, emoji:$("#ed-emoji").value.trim()||"🍽️", servings:Math.max(1,parseInt($("#ed-serv").value,10)||4), ingredients:ings};
     if(isNew) state.meals.unshift(meal); else state.meals=state.meals.map(function(x){return x.id===meal.id?meal:x;});
     closeModal(); render(); toast(isNew?"Meal added":"Meal saved");
   };
-  if(isNew) setTimeout(function(){ $("#ed-name").focus(); },50);
+  if(isNew && !opts.title) setTimeout(function(){ $("#ed-name").focus(); },50);
+  sheet.scrollTop = 0;
 }
+
+/* ---------- Import from link ---------- */
+var PROXIES = [
+  { name:"direct", url:function(u){ return u; }, timeout:6000 },
+  { name:"r.jina.ai", url:function(u){ return "https://r.jina.ai/" + u; }, headers:{"X-Return-Format":"html"}, timeout:25000 },
+  { name:"allorigins", url:function(u){ return "https://api.allorigins.win/raw?url=" + encodeURIComponent(u); }, timeout:10000 },
+  { name:"codetabs", url:function(u){ return "https://api.codetabs.com/v1/proxy?quest=" + encodeURIComponent(u); }, timeout:10000 },
+  { name:"cors.lol", url:function(u){ return "https://api.cors.lol/?url=" + encodeURIComponent(u); }, timeout:10000 }
+];
+var BLOCKING_SITES = /(allrecipes|seriouseats|simplyrecipes|eatingwell|foodandwine|marthastewart|bhg|southernliving|myrecipes|realsimple|thespruceeats|delish|tasteofhome)\./i;
+
+function fetchWithTimeout(url, ms, headers, signal){
+  var ctl = new AbortController(), timer = setTimeout(function(){ ctl.abort(); }, ms);
+  if(signal) signal.addEventListener("abort", function(){ ctl.abort(); });
+  return fetch(url, { signal:ctl.signal, headers:headers||{}, credentials:"omit", redirect:"follow" })
+    .finally(function(){ clearTimeout(timer); });
+}
+/* Try each proxy until accept(html) returns something truthy. */
+async function fetchViaProxies(url, accept, progress, signal){
+  var log = [], lastHtml = null, blocked = false;
+  for(var i=0;i<PROXIES.length;i++){
+    if(signal && signal.aborted) throw new Error("cancelled");
+    var p = PROXIES[i];
+    progress && progress(i===0 ? "Opening the page…" : "Trying another way in (" + (i+1) + " of " + PROXIES.length + ")…");
+    try{
+      var res = await fetchWithTimeout(p.url(url), p.timeout, p.headers, signal);
+      var text = await res.text();
+      if(res.status === 451 || /excluded from Jina Reader/i.test(text.slice(0,400))) blocked = true;
+      if(!res.ok){ log.push(p.name + ": HTTP " + res.status); continue; }
+      if(text.length < 200){ log.push(p.name + ": empty"); continue; }
+      lastHtml = text;
+      var got = accept(text);
+      if(got){ got.proxy = p.name; return got; }
+      log.push(p.name + ": no recipe in page");
+    }catch(e){ log.push(p.name + ": " + (e.name==="AbortError" ? "timed out" : (e.message||"failed"))); }
+  }
+  if(signal && signal.aborted) throw new Error("cancelled");
+  var err = new Error("all proxies failed"); err.log = log; err.lastHtml = lastHtml; err.blocked = blocked; throw err;
+}
+/* DOM-based fallback for pages without JSON-LD (microdata, popular recipe plugins) */
+function domExtract(html){
+  try{
+    var safe = html.replace(/<(script|style|iframe|noscript|svg)\b[\s\S]*?<\/\1>/gi," ").replace(/<(link|img|source|video|audio|meta)\b[^>]*>/gi," ");
+    var doc = new DOMParser().parseFromString(safe, "text/html");
+    var sels = ['[itemprop="recipeIngredient"]','[itemprop="ingredients"]','.wprm-recipe-ingredient','.tasty-recipes-ingredients li','.mv-create-ingredients li','.ingredients-item','[class*="ingredient-list"] li','[class*="ingredients"] li'];
+    for(var i=0;i<sels.length;i++){
+      var els = Array.prototype.slice.call(doc.querySelectorAll(sels[i]));
+      var lines = els.map(function(e){ return e.textContent.replace(/\s+/g," ").trim(); }).filter(function(t){ return t && t.length < 160; });
+      if(lines.length >= 2){
+        var h = doc.querySelector('[itemtype*="Recipe"] [itemprop="name"]') || doc.querySelector("h1");
+        var y = doc.querySelector('[itemprop="recipeYield"]');
+        return { name: h ? h.textContent.trim() : pageTitle(html), servings: y ? parseYield(y.getAttribute("content") || y.textContent) : null, lines: lines, via:"page" };
+      }
+    }
+  }catch(e){}
+  return null;
+}
+function recipeFromHtml(html){
+  var r = extractRecipeFromHtml(html) || domExtract(html);
+  if(r && !r.name) r.name = pageTitle(html);
+  return r;
+}
+function guessEmoji(name){
+  var n = normName(name), map = [[/pasta|spaghetti|penne|rigatoni|fettuc|linguine|alfredo|noodle|mac/, "🍝"],[/taco|burrito|quesadilla|enchilada|fajita/,"🌮"],[/pizza/,"🍕"],[/burger/,"🍔"],[/salad/,"🥗"],[/soup|stew|chili|chowder/,"🍲"],[/curry/,"🍛"],[/salmon|fish|cod|tuna/,"🐟"],[/shrimp|prawn/,"🍤"],[/steak|beef/,"🥩"],[/chicken|wings/,"🍗"],[/pancake|waffle/,"🥞"],[/cookie/,"🍪"],[/cake|cupcake/,"🍰"],[/pie/,"🥧"],[/bread|loaf|focaccia/,"🍞"],[/egg|omelet|frittata/,"🍳"],[/rice|risotto/,"🍚"],[/sandwich|sub|wrap/,"🥪"],[/smoothie|shake/,"🥤"],[/sushi/,"🍣"],[/dumpling|gyoza/,"🥟"]];
+  for(var i=0;i<map.length;i++) if(map[i][0].test(n)) return map[i][1];
+  return "🍽️";
+}
+function toMeal(r, source){
+  var ings = (r.ingredients || r.lines.map(parseIngredientLine)).filter(function(i){ return i && i.name; });
+  var name = (r.name || "Imported recipe").replace(/\s+/g," ").trim().slice(0,80);
+  return { id:null, source:source||undefined, name:name, emoji:guessEmoji(name), servings:r.servings||4, ingredients:ings };
+}
+
+/* TikTok: caption via oEmbed (CORS-enabled), falling back to the page's embedded JSON through proxies */
+function captionFromTikTokHtml(html){
+  var m = html.match(/<script[^>]+id="__UNIVERSAL_DATA_FOR_REHYDRATION__"[^>]*>([\s\S]*?)<\/script>/);
+  if(m){ try{ var d = JSON.parse(m[1]); var it = d.__DEFAULT_SCOPE__["webapp.video-detail"].itemInfo.itemStruct; return { caption: it.desc, author: it.author && (it.author.nickname || it.author.uniqueId), id: it.id }; }catch(e){} }
+  m = html.match(/<script[^>]+id="SIGI_STATE"[^>]*>([\s\S]*?)<\/script>/);
+  if(m){ try{ var s2 = JSON.parse(m[1]); var k = Object.keys(s2.ItemModule||{})[0]; if(k) return { caption: s2.ItemModule[k].desc, author: s2.ItemModule[k].author, id:k }; }catch(e){} }
+  var c = html.match(/<link[^>]+rel="canonical"[^>]+href="([^"]+)"/i) || html.match(/property="og:url"[^>]+content="([^"]+)"/i);
+  var id = c && tiktokVideoId(c[1]);
+  var dm = html.match(/"desc":"((?:[^"\\]|\\.)*)"/);
+  var cap = null; if(dm){ try{ cap = JSON.parse('"' + dm[1] + '"'); }catch(e){} }
+  if(id || cap) return { caption: cap, author:null, id:id };
+  return null;
+}
+async function oembed(videoUrl, signal){
+  var res = await fetchWithTimeout("https://www.tiktok.com/oembed?url=" + encodeURIComponent(videoUrl), 10000, null, signal);
+  if(!res.ok) throw new Error("oEmbed HTTP " + res.status);
+  var j = await res.json(); if(!j || typeof j.title !== "string") throw new Error("oEmbed: no caption");
+  return { caption: j.title, author: j.author_name };
+}
+async function importTikTok(url, progress, signal){
+  var id = tiktokVideoId(url), info = null, via = "";
+  progress("Reading the TikTok caption…");
+  try{ info = await oembed(id ? "https://www.tiktok.com/@_/video/" + id : url, signal); via = "TikTok oEmbed"; }catch(e){}
+  if(!info){
+    // short link or oEmbed failure: load the page through proxies to resolve the video & caption
+    progress("Opening the TikTok page…");
+    var page = await fetchViaProxies(url, function(html){ return captionFromTikTokHtml(html); }, progress, signal);
+    if(page.id && !page.caption){ try{ info = await oembed("https://www.tiktok.com/@_/video/" + page.id, signal); }catch(e){} }
+    if(!info && page.caption) info = { caption: page.caption, author: page.author };
+    via = "TikTok page via " + page.proxy;
+    if(!info) throw Object.assign(new Error("no caption"), { tiktokNoCaption:true });
+  }
+  var r = extractFromCaption(info.caption || "");
+  r.caption = info.caption; r.author = info.author; r.via = via;
+  if(!r.name) r.name = info.author ? "TikTok recipe from " + info.author : "TikTok recipe";
+  return r;
+}
+
+var importCtl = null;
+function openImport(prefill){
+  sheet.innerHTML = '<h2>Import a recipe</h2>'+
+    '<p style="margin:-4px 0 12px;color:var(--muted);font-size:14px">Paste a link to a recipe page (most food blogs and recipe sites) or a TikTok video whose caption lists the ingredients.</p>'+
+    '<form id="im-form" autocomplete="off" novalidate><label class="field"><span>Recipe link</span><input id="im-url" type="url" inputmode="url" placeholder="https://…" value="'+esc(prefill||"")+'" enterkeyhint="go"></label>'+
+    '<div class="row"><button type="button" class="btn" id="im-pastebtn" style="flex:1">📋 Paste</button><button type="submit" class="btn primary" id="im-go" style="flex:2">Import</button></div></form>'+
+    '<div class="status" id="im-status"><div class="spin"></div><span id="im-status-t">Working…</span></div>'+
+    '<div class="err" id="im-err"></div>'+
+    '<details class="paste" id="im-paste"><summary>✍️ Or paste the ingredient list as text</summary>'+
+      '<label class="field"><span>Meal name</span><input id="im-name" placeholder="e.g. Creamy tomato pasta"></label>'+
+      '<label class="field"><span>Ingredients (one per line works best)</span><textarea id="im-text" placeholder="2 cups flour&#10;1 1/2 tsp salt&#10;3 cloves garlic, minced&#10;1 (14 oz) can diced tomatoes"></textarea></label>'+
+      '<button type="button" class="btn primary block" id="im-usetext">Use this list</button></details>'+
+    '<button type="button" class="btn block" id="im-cancel" style="margin-top:12px">Cancel</button>';
+  modal.classList.add("show"); document.body.style.overflow="hidden";
+  var urlIn = $("#im-url");
+  if(!prefill) setTimeout(function(){ urlIn.focus(); }, 50);
+  $("#im-cancel").onclick = function(){ if(importCtl) importCtl.abort(); closeModal(); };
+  var pb = $("#im-pastebtn");
+  if(!(navigator.clipboard && navigator.clipboard.readText)) pb.style.display="none";
+  pb.onclick = function(){ navigator.clipboard.readText().then(function(t){ var m = String(t).match(/https?:\/\/\S+/); urlIn.value = m ? m[0] : t.trim(); }, function(){ toast("Long-press the box to paste"); urlIn.focus(); }); };
+  $("#im-usetext").onclick = function(){
+    var txt = $("#im-text").value; var r = parseIngredientText(txt);
+    if(!r.ingredients.length){ showErr("I couldn't find any ingredients in that text. Put one ingredient per line, like “2 cups flour”."); return; }
+    if($("#im-name").value.trim()) r.name = $("#im-name").value.trim();
+    var meal = toMeal(r, urlIn.value.trim() && /^https?:/i.test(urlIn.value.trim()) ? urlIn.value.trim() : null);
+    if(!r.name) meal.name = "";
+    openEditor(meal, { title:"Review imported meal", note:"Found <b>"+meal.ingredients.length+" ingredients</b>. Check the amounts and categories, then tap <b>Save meal</b>." });
+  };
+  $("#im-form").onsubmit = function(ev){ ev.preventDefault(); runImport(urlIn.value); };
+  if(prefill) runImport(prefill);
+}
+function showStatus(t){ var s=$("#im-status"); if(!s) return; if(t){ $("#im-status-t").textContent=t; s.classList.add("show"); } else s.classList.remove("show"); }
+function showErr(html, openPaste){
+  var e=$("#im-err"); if(!e) return; if(!html){ e.classList.remove("show"); return; }
+  e.innerHTML = html; e.classList.add("show");
+  if(openPaste){ var d=$("#im-paste"); d.open = true; }
+}
+async function runImport(raw){
+  var url = String(raw||"").trim(); var m = url.match(/https?:\/\/\S+/); if(m) url = m[0];
+  else if(/^[\w-]+(\.[\w-]+)+\//.test(url)) url = "https://" + url;
+  showErr(null);
+  if(!/^https?:\/\/[^\s/]+\.[^\s/]+/i.test(url)){ showErr("That doesn't look like a web link. Copy it from the share button (it should start with <b>https://</b>)."); return; }
+  if(importCtl) importCtl.abort();
+  var ctl = importCtl = new AbortController();
+  var go = $("#im-go"); go.disabled = true; go.textContent = "Importing…";
+  try{
+    var r, isTT = isTikTokUrl(url);
+    if(isTT){
+      r = await importTikTok(url, showStatus, ctl.signal);
+      if(!r.lines.length){
+        if($("#im-name")) $("#im-name").value = r.name || "";
+        showErr("<b>This TikTok's caption doesn't list the ingredients.</b> Lots of creators only say them in the video (or put them behind a link in their bio). Watch it and type the list below. One per line is perfect." +
+          (r.caption ? '<div class="caption">'+esc(r.caption.slice(0,500))+'</div>' : ""), true);
+        return;
+      }
+    } else {
+      r = await fetchViaProxies(url, recipeFromHtml, showStatus, ctl.signal);
+    }
+    if(ctl.signal.aborted) return;
+    var meal = toMeal(r, url);
+    if(!meal.ingredients.length) throw new Error("no ingredients");
+    var src = esc(new URL(url).hostname.replace(/^www\./,""));
+    openEditor(meal, { title:"Review imported meal", note:"Imported <b>"+meal.ingredients.length+" ingredients</b> from "+(isTT?"the TikTok caption":src)+". Give the amounts and categories a quick check, then tap <b>Save meal</b>." });
+  }catch(e){
+    if(ctl.signal.aborted || e.message==="cancelled") return;
+    var host = ""; try{ host = new URL(url).hostname.replace(/^www\./,""); }catch(_){}
+    var msg;
+    if(e.tiktokNoCaption) msg = "I couldn't read that TikTok. It may be private, deleted, or a short link that didn't open. Try the full link (open the video in your browser and copy it), or paste the ingredients below.";
+    else if(e.lastHtml) msg = "I opened the page but couldn't find a recipe card on it. If it's a recipe, copy the ingredient list and paste it below.";
+    else if(e.blocked || BLOCKING_SITES.test(host)) msg = "<b>" + esc(host) + "</b> blocks apps from reading its recipes. Open the recipe, copy the ingredient list, and paste it below.";
+    else msg = "I couldn't reach that page right now. The site may be blocking outside readers, or the free reader services are busy. Try again in a minute, or paste the ingredient list below.";
+    showErr(msg, true);
+    if(window.console) console.warn("import failed", e.log || e);
+  }finally{
+    if(importCtl === ctl) importCtl = null;
+    showStatus(null); var g=$("#im-go"); if(g){ g.disabled=false; g.textContent="Import"; }
+  }
+}
+$("#importBtn").addEventListener("click", function(){ openImport(""); });
+// allow ?import=<url> deep link (handy for sharing a link straight into the app)
+try{ var qp = new URLSearchParams(location.search).get("import") || new URLSearchParams(location.search).get("text") || new URLSearchParams(location.search).get("url"); if(qp){ history.replaceState(null,"",location.pathname); setTimeout(function(){ openImport((qp.match(/https?:\/\/\S+/)||[qp])[0]); },0); } }catch(e){}
 
 render();
 })();
